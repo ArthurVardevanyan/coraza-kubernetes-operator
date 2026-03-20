@@ -21,10 +21,10 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	mathrand "math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +40,10 @@ const (
 	// DefaultInterval is the default polling interval.
 	DefaultInterval = 2 * time.Second
 )
+
+// namespaceMu serializes namespace creation to reduce Istio CA certificate
+// signing contention when many parallel tests create namespaces simultaneously.
+var namespaceMu sync.Mutex
 
 // Scenario manages the lifecycle of a single test scenario: namespace
 // creation, resource cleanup, and step tracking.
@@ -113,11 +117,15 @@ func (s *Scenario) GenerateNamespace(prefix string) string {
 }
 
 // CreateNamespace creates a namespace and registers it for cleanup.
-// A small random delay (0-2s) is added to stagger parallel test starts,
-// reducing contention on Istio CA certificate signing.
+// Namespace creation is serialized via namespaceMu to prevent Istio CA
+// certificate signing contention when many parallel tests start at once.
 func (s *Scenario) CreateNamespace(name string) {
 	s.T.Helper()
 	ctx := s.T.Context()
+
+	// Serialize namespace creation to avoid overwhelming Istio CA.
+	namespaceMu.Lock()
+	defer namespaceMu.Unlock()
 
 	ns := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -127,10 +135,6 @@ func (s *Scenario) CreateNamespace(name string) {
 
 	s.namespaces = append(s.namespaces, name)
 	s.T.Logf("Created namespace: %s", name)
-
-	// Stagger parallel tests to reduce Istio CA contention.
-	staggerDelay := time.Duration(mathrand.Intn(2000)) * time.Millisecond
-	time.Sleep(staggerDelay)
 
 	s.OnCleanup(func() {
 		// Background: test context may already be cancelled; cleanup must still run.
