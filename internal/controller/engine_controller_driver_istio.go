@@ -38,6 +38,8 @@ import (
 // -----------------------------------------------------------------------------
 
 // +kubebuilder:rbac:groups=extensions.istio.io,resources=wasmplugins,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.istio.io,resources=serviceentries;destinationrules,verbs=get;create;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get
 // +kubebuilder:rbac:groups="",resources=pods,verbs=list;watch
 
 // -----------------------------------------------------------------------------
@@ -54,39 +56,25 @@ const WasmPluginNamePrefix = "coraza-engine-"
 // provisionIstioEngineWithWasm provisions the Istio WasmPlugin resource for
 // the Engine.
 func (r *EngineReconciler) provisionIstioEngineWithWasm(ctx context.Context, log logr.Logger, req ctrl.Request, engine wafv1alpha1.Engine) (ctrl.Result, error) {
-	logDebug(log, req, "Engine", "Building WasmPlugin resource")
-	wasmPlugin := r.buildWasmPlugin(&engine)
-
-	logDebug(log, req, "Engine", "Setting controller reference on WasmPlugin")
-	if err := controllerutil.SetControllerReference(&engine, wasmPlugin, r.Scheme); err != nil {
-		logError(log, req, "Engine", err, "Failed to set owner reference on WasmPlugin")
-		return ctrl.Result{}, err
-	}
-
-	logDebug(log, req, "Engine", "Applying WasmPlugin", "wasmPluginName", wasmPlugin.GetName())
-	if err := serverSideApply(ctx, r.Client, wasmPlugin); err != nil {
-		logError(log, req, "Engine", err, "Failed to create or update WasmPlugin")
-		r.Recorder.Eventf(&engine, nil, "Warning", "ProvisioningFailed", "Provision", "Failed to create WasmPlugin: %v", err)
-
-		patch := client.MergeFrom(engine.DeepCopy())
-		setStatusConditionDegraded(log, req, "Engine", &engine.Status.Conditions, engine.Generation, "ProvisioningFailed", fmt.Sprintf("Failed to create or update WasmPlugin: %v", err))
-		if updateErr := r.Status().Patch(ctx, &engine, patch); updateErr != nil {
-			logError(log, req, "Engine", updateErr, "Failed to patch status after provisioning failure")
+	wasmPlugin, err := r.applyWasmPlugin(ctx, log, req, &engine)
+	if err != nil {
+		if patchErr := patchDegraded(ctx, r.Status(), r.Recorder, log, req, "Engine", &engine, &engine.Status.Conditions, engine.Generation, "ProvisioningFailed", fmt.Sprintf("Failed to create or update WasmPlugin: %v", err)); patchErr != nil {
+			return ctrl.Result{}, patchErr
 		}
-
 		return ctrl.Result{}, err
 	}
-	logInfo(log, req, "Engine", "WasmPlugin provisioned", "wasmNamespace", wasmPlugin.GetNamespace(), "wasmName", wasmPlugin.GetName())
 
 	logDebug(log, req, "Engine", "Finding matched Gateways")
-	gateways, err := r.matchedGateways(ctx, log, req, &engine)
-	if err != nil {
-		logError(log, req, "Engine", err, "Failed to find matched Gateways, not updating Gateway status")
+	gateways, gwErr := r.matchedGateways(ctx, log, req, &engine)
+	if gwErr != nil {
+		logError(log, req, "Engine", gwErr, "Failed to find matched Gateways, not updating Gateway status")
 	}
 
+	// Status patching is kept inline because it mutates engine.Status.Gateways
+	// between DeepCopy and Patch, which patchReady cannot accommodate.
 	logDebug(log, req, "Engine", "Updating status after successful provisioning")
 	patch := client.MergeFrom(engine.DeepCopy())
-	if err == nil {
+	if gwErr == nil {
 		engine.Status.Gateways = gateways
 	}
 	setStatusReady(log, req, "Engine", &engine.Status.Conditions, engine.Generation, "Configured", "WasmPlugin successfully created/updated")
@@ -97,6 +85,28 @@ func (r *EngineReconciler) provisionIstioEngineWithWasm(ctx context.Context, log
 	r.Recorder.Eventf(&engine, nil, "Normal", "WasmPluginCreated", "Provision", "Created WasmPlugin %s/%s", wasmPlugin.GetNamespace(), wasmPlugin.GetName())
 
 	return ctrl.Result{}, nil
+}
+
+// applyWasmPlugin builds the WasmPlugin resource, sets the controller reference,
+// and applies it via server-side apply.
+func (r *EngineReconciler) applyWasmPlugin(ctx context.Context, log logr.Logger, req ctrl.Request, engine *wafv1alpha1.Engine) (*unstructured.Unstructured, error) {
+	logDebug(log, req, "Engine", "Building WasmPlugin resource")
+	wasmPlugin := r.buildWasmPlugin(engine)
+
+	logDebug(log, req, "Engine", "Setting controller reference on WasmPlugin")
+	if err := controllerutil.SetControllerReference(engine, wasmPlugin, r.Scheme); err != nil {
+		logError(log, req, "Engine", err, "Failed to set owner reference on WasmPlugin")
+		return nil, err
+	}
+
+	logDebug(log, req, "Engine", "Applying WasmPlugin", "wasmPluginName", wasmPlugin.GetName())
+	if err := serverSideApply(ctx, r.Client, wasmPlugin); err != nil {
+		logError(log, req, "Engine", err, "Failed to create or update WasmPlugin")
+		return nil, err
+	}
+
+	logInfo(log, req, "Engine", "WasmPlugin provisioned", "wasmNamespace", wasmPlugin.GetNamespace(), "wasmName", wasmPlugin.GetName())
+	return wasmPlugin, nil
 }
 
 // -----------------------------------------------------------------------------
@@ -166,6 +176,7 @@ const gatewayNameLabel = "gateway.networking.k8s.io/gateway-name"
 // the well-known gateway-name label on each pod.
 func (r *EngineReconciler) matchedGateways(ctx context.Context, log logr.Logger, req ctrl.Request, engine *wafv1alpha1.Engine) ([]wafv1alpha1.GatewayReference, error) {
 	if engine.Spec.Driver.Istio.Wasm.WorkloadSelector == nil {
+		logDebug(log, req, "Engine", "Empty workload selector for engine")
 		return nil, nil
 	}
 

@@ -30,8 +30,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// +kubebuilder:rbac:groups=networking.istio.io,resources=serviceentries;destinationrules,verbs=get;create;update;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get
+// -----------------------------------------------------------------------------
+// Istio Prerequisites
+// -----------------------------------------------------------------------------
 
 // IstioPrerequisites creates the Istio ServiceEntry and DestinationRule
 // resources required for the RuleSet cache server to be reachable from

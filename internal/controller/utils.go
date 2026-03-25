@@ -20,16 +20,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // -----------------------------------------------------------------------------
@@ -100,12 +104,86 @@ func setStatusProgressing(log logr.Logger, req ctrl.Request, kind string, condit
 	setConditionTrue(conditions, generation, "Progressing", reason, message)
 }
 
+// patchDegraded marks a resource as Degraded, emits a Warning event, and
+// patches the status in a single call. It consolidates the repeated pattern of
+// Eventf → DeepCopy → setStatusConditionDegraded → Status().Patch → error log.
+func patchDegraded(
+	ctx context.Context,
+	statusWriter client.StatusWriter,
+	recorder events.EventRecorder,
+	log logr.Logger,
+	req ctrl.Request,
+	kind string,
+	obj client.Object,
+	conditions *[]metav1.Condition,
+	generation int64,
+	reason, message string,
+) error {
+	recorder.Eventf(obj, nil, "Warning", reason, "Reconcile", message)
+	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
+	setStatusConditionDegraded(log, req, kind, conditions, generation, reason, message)
+	if err := statusWriter.Patch(ctx, obj, patch); err != nil {
+		logError(log, req, kind, err, "Failed to patch status")
+		return err
+	}
+	return nil
+}
+
 // setStatusReady is a helper to mark a resource as ready, fully reconciled.
 func setStatusReady(log logr.Logger, req ctrl.Request, kind string, conditions *[]metav1.Condition, generation int64, reason, message string) {
 	logDebug(log, req, kind, fmt.Sprintf("Setting ready status: %s", reason))
 	setConditionTrue(conditions, generation, "Ready", reason, message)
 	apimeta.RemoveStatusCondition(conditions, "Degraded")
 	apimeta.RemoveStatusCondition(conditions, "Progressing")
+}
+
+// patchReady marks a resource as Ready, emits a Normal event, and patches the
+// status in a single call. It mirrors patchDegraded for the success path.
+func patchReady(
+	ctx context.Context,
+	statusWriter client.StatusWriter,
+	recorder events.EventRecorder,
+	log logr.Logger,
+	req ctrl.Request,
+	kind string,
+	obj client.Object,
+	conditions *[]metav1.Condition,
+	generation int64,
+	reason, message string,
+) error {
+	recorder.Eventf(obj, nil, "Normal", reason, "Reconcile", message)
+	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
+	setStatusReady(log, req, kind, conditions, generation, reason, message)
+	if err := statusWriter.Patch(ctx, obj, patch); err != nil {
+		logError(log, req, kind, err, "Failed to patch status")
+		return err
+	}
+	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Watch Mapper Helpers
+// -----------------------------------------------------------------------------
+
+// collectRequests filters a slice of Kubernetes objects by a predicate and
+// returns reconcile.Requests for each match.
+func collectRequests[E any, P interface {
+	*E
+	client.Object
+}](items []E, match func(P) bool) []reconcile.Request {
+	var requests []reconcile.Request
+	for i := range items {
+		p := P(&items[i])
+		if match(p) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      p.GetName(),
+					Namespace: p.GetNamespace(),
+				},
+			})
+		}
+	}
+	return requests
 }
 
 // -----------------------------------------------------------------------------
@@ -157,4 +235,52 @@ func serverSideApply(ctx context.Context, c client.Client, desired *unstructured
 		return fmt.Errorf("server-side apply %s %s/%s: %w", gvk.Kind, desired.GetNamespace(), desired.GetName(), err)
 	}
 	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Error Messaging Helpers
+// -----------------------------------------------------------------------------
+
+func sanitizeErrorMessage(err error) error {
+	matches := sanitizeFilePath.FindStringSubmatch(err.Error())
+
+	if len(matches) < 2 {
+		return err
+	}
+
+	// matches[1] is the full path. filepath.Base pulls the last element.
+	fileName := filepath.Base(matches[1])
+
+	return fmt.Errorf("open %s: data does not exist", fileName)
+
+}
+
+// shouldSkipMissingFileError reports whether a missing-file validation error should
+// be skipped because the file is present in secretData.
+func shouldSkipMissingFileError(err error, secretData map[string][]byte) bool {
+	if secretData == nil {
+		return false
+	}
+
+	matches := sanitizeFilePath.FindStringSubmatch(err.Error())
+	if len(matches) < 2 {
+		return false
+	}
+
+	fileName := filepath.Base(matches[1])
+
+	_, exists := secretData[fileName]
+	return exists
+}
+
+// buildCacheReadyMessage constructs the Ready condition message after successful
+// caching. When unsupportedMsg is non-empty (annotation override active), the
+// detected unsupported rules are appended so they remain visible in the status.
+func buildCacheReadyMessage(namespace, name, unsupportedMsg string) string {
+	msg := fmt.Sprintf("Successfully cached rules for %s/%s", namespace, name)
+	if unsupportedMsg != "" {
+		msg += "\n[annotation override] " + unsupportedMsg
+	}
+
+	return msg
 }

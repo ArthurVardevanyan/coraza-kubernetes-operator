@@ -33,27 +33,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// ---------------------------------------------------------------------------
-// Unit tests – build helpers (no envtest needed)
-// ---------------------------------------------------------------------------
-
-func newTestPrereqs(operatorName, namespace, istioRevision string) *IstioPrerequisites {
-	return &IstioPrerequisites{
-		operatorName:  operatorName,
-		namespace:     namespace,
-		istioRevision: istioRevision,
-	}
-}
-
-func testOwnerRef() metav1.OwnerReference {
-	return metav1.OwnerReference{
-		APIVersion: "apps/v1",
-		Kind:       "Deployment",
-		Name:       "my-op",
-		UID:        types.UID("aaaa-bbbb"),
-	}
-}
-
 func TestBuildServiceEntry_Shape(t *testing.T) {
 	p := newTestPrereqs("my-op", "test-ns", "")
 	labels := map[string]string{
@@ -158,60 +137,6 @@ func TestNewIstioObject_IstioRevisionLabel(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// Envtest tests – apply() and Start()
-// ---------------------------------------------------------------------------
-
-// setupTestNamespace creates an isolated namespace and returns its name.
-func setupTestNamespace(t *testing.T, ctx context.Context) string {
-	t.Helper()
-	ns := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("envtest-%s", uuid.New().String()),
-		},
-	}
-	require.NoError(t, k8sClient.Create(ctx, ns))
-	t.Cleanup(func() {
-		if err := k8sClient.Delete(ctx, ns); err != nil {
-			t.Logf("Failed to delete test namespace: %v", err)
-		}
-	})
-	return ns.Name
-}
-
-func createDeployment(t *testing.T, ctx context.Context, name, namespace string) *appsv1.Deployment {
-	t.Helper()
-	deploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"app": name},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"app": name},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  "controller",
-						Image: "ghcr.io/test:latest",
-					}},
-				},
-			},
-		},
-	}
-	require.NoError(t, k8sClient.Create(ctx, deploy))
-	t.Cleanup(func() {
-		if err := k8sClient.Delete(ctx, deploy); err != nil {
-			t.Logf("Failed to delete test deployment: %v", err)
-		}
-	})
-	return deploy
-}
-
 func TestIstioPrerequisites_Apply(t *testing.T) {
 	ctx := context.Background()
 	namespace := setupTestNamespace(t, ctx)
@@ -299,4 +224,75 @@ func TestIstioPrerequisites_StartReturnsNilOnError(t *testing.T) {
 	p := NewIstioPrerequisites(k8sClient, k8sClient, "no-such-deploy", namespace, "")
 	err := p.Start(ctx)
 	assert.NoError(t, err, "Start() must return nil even when apply fails")
+}
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+func newTestPrereqs(operatorName, namespace, istioRevision string) *IstioPrerequisites {
+	return &IstioPrerequisites{
+		operatorName:  operatorName,
+		namespace:     namespace,
+		istioRevision: istioRevision,
+	}
+}
+
+func testOwnerRef() metav1.OwnerReference {
+	return metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       "my-op",
+		UID:        types.UID("aaaa-bbbb"),
+	}
+}
+
+// setupTestNamespace creates an isolated namespace and returns its name.
+func setupTestNamespace(t *testing.T, ctx context.Context) string {
+	t.Helper()
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: fmt.Sprintf("envtest-%s", uuid.New().String()),
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, ns))
+	t.Cleanup(func() {
+		if err := k8sClient.Delete(ctx, ns); err != nil {
+			t.Logf("Failed to delete test namespace: %v", err)
+		}
+	})
+	return ns.Name
+}
+
+func createDeployment(t *testing.T, ctx context.Context, name, namespace string) *appsv1.Deployment {
+	t.Helper()
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": name},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": name},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Name:  "controller",
+						Image: "ghcr.io/test:latest",
+					}},
+				},
+			},
+		},
+	}
+	require.NoError(t, k8sClient.Create(ctx, deploy))
+	t.Cleanup(func() {
+		if err := k8sClient.Delete(ctx, deploy); err != nil {
+			t.Logf("Failed to delete test deployment: %v", err)
+		}
+	})
+	return deploy
 }
