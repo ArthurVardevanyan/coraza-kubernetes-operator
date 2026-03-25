@@ -1,0 +1,112 @@
+/*
+Copyright Coraza Kubernetes Operator contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package main
+
+import (
+	"crypto/tls"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// -----------------------------------------------------------------------------
+// buildTLSOpts Tests
+// -----------------------------------------------------------------------------
+
+func TestBuildTLSOpts_HTTP2Enabled(t *testing.T) {
+	opts := buildTLSOpts(true)
+	assert.Nil(t, opts)
+}
+
+func TestBuildTLSOpts_HTTP2Disabled(t *testing.T) {
+	opts := buildTLSOpts(false)
+	require.Len(t, opts, 1)
+
+	tlsCfg := &tls.Config{}
+	opts[0](tlsCfg)
+	assert.Equal(t, []string{"http/1.1"}, tlsCfg.NextProtos)
+}
+
+// -----------------------------------------------------------------------------
+// buildMetricsServerOptions Tests
+// -----------------------------------------------------------------------------
+
+func TestBuildMetricsServerOptions_Defaults(t *testing.T) {
+	cfg := config{
+		metricsAddr:   ":8080",
+		secureMetrics: false,
+	}
+
+	opts := buildMetricsServerOptions(cfg, nil)
+
+	assert.Equal(t, ":8080", opts.BindAddress)
+	assert.False(t, opts.SecureServing)
+	assert.Nil(t, opts.FilterProvider)
+	assert.Empty(t, opts.CertDir)
+}
+
+func TestBuildMetricsServerOptions_SecureMetrics(t *testing.T) {
+	cfg := config{
+		metricsAddr:   ":8443",
+		secureMetrics: true,
+	}
+
+	opts := buildMetricsServerOptions(cfg, nil)
+
+	assert.Equal(t, ":8443", opts.BindAddress)
+	assert.True(t, opts.SecureServing)
+	assert.NotNil(t, opts.FilterProvider)
+}
+
+func TestBuildMetricsServerOptions_WithCertPath(t *testing.T) {
+	cfg := config{
+		metricsAddr:     ":8443",
+		secureMetrics:   true,
+		metricsCertPath: "/certs",
+		metricsCertName: "server.crt",
+		metricsCertKey:  "server.key",
+	}
+
+	opts := buildMetricsServerOptions(cfg, nil)
+
+	assert.Equal(t, "/certs", opts.CertDir)
+	assert.Equal(t, "server.crt", opts.CertName)
+	assert.Equal(t, "server.key", opts.KeyName)
+}
+
+// -----------------------------------------------------------------------------
+// setupWebhookServer Tests
+// -----------------------------------------------------------------------------
+
+func TestSetupWebhookServer_NoCertPath(t *testing.T) {
+	cfg := config{}
+
+	server := setupWebhookServer(cfg, nil)
+	assert.NotNil(t, server)
+}
+
+func TestSetupWebhookServer_WithCertPath(t *testing.T) {
+	cfg := config{
+		webhookCertPath: "/webhook-certs",
+		webhookCertName: "webhook.crt",
+		webhookCertKey:  "webhook.key",
+	}
+
+	server := setupWebhookServer(cfg, nil)
+	assert.NotNil(t, server)
+}
