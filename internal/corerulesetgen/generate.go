@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 func stderrf(w io.Writer, format string, a ...any) {
@@ -57,6 +59,10 @@ func Generate(out io.Writer, opts Options) (*Result, error) {
 		opts.Stderr = io.Discard
 	}
 	opts = applyDefaults(opts)
+
+	if err := validateResourceNames(opts); err != nil {
+		return nil, err
+	}
 
 	if opts.DryRun {
 		stderrln(opts.Stderr, "dry-run: no objects sent to cluster")
@@ -113,7 +119,7 @@ func Generate(out io.Writer, opts Options) (*Result, error) {
 		}
 	}
 
-	writeGenerateSummary(opts.Stderr, scan.PMFromFileRefs, len(scan.DataPaths) == 0, bundle.Stats.Processed, bundle.Stats.Skipped, len(bundle.ExtraConfigMaps), len(scan.DataPaths), opts.DataSecretName)
+	writeGenerateSummary(opts.Stderr, scan.PMFromFileRefs && !opts.IgnorePMFromFile, len(scan.DataPaths) == 0, bundle.Stats.Processed, bundle.Stats.Skipped, len(bundle.ExtraConfigMaps), len(scan.DataPaths), opts.DataSecretName)
 
 	if err := WriteManifests(out, bundle); err != nil {
 		return nil, err
@@ -148,4 +154,25 @@ func writeGenerateSummary(stderr io.Writer, pmFromFileRefs, noDataFiles bool, pr
 		stderrf(stderr, "  Data Secret: %s\n", dataSecretName)
 	}
 	stderrf(stderr, "%s\n\n", strings.Repeat("=", 60))
+}
+
+// validateResourceNames checks that user-provided Kubernetes resource names
+// and namespace are valid before generating any manifests.
+func validateResourceNames(opts Options) error {
+	for _, check := range []struct {
+		value, label string
+	}{
+		{opts.RuleSetName, "ruleset-name"},
+		{opts.DataSecretName, "data-secret-name"},
+	} {
+		if errs := validation.IsDNS1123Subdomain(check.value); len(errs) > 0 {
+			return fmt.Errorf("invalid %s %q: %s", check.label, check.value, strings.Join(errs, "; "))
+		}
+	}
+	if opts.Namespace != "" {
+		if errs := validation.IsDNS1123Label(opts.Namespace); len(errs) > 0 {
+			return fmt.Errorf("invalid namespace %q: %s", opts.Namespace, strings.Join(errs, "; "))
+		}
+	}
+	return nil
 }
