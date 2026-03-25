@@ -43,7 +43,7 @@ import (
 )
 
 const (
-	// rulesetName matches the default from kubectl-coraza / internal/corerulesetgen (default-ruleset).
+	// rulesetName matches the default from kubectl-coraza / tools/corerulesetgen (default-ruleset).
 	rulesetName = "default-ruleset"
 
 	// gwName defines the gateway name for this test

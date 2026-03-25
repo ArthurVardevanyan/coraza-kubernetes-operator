@@ -1,18 +1,18 @@
 # kubectl-coraza
 
-`kubectl-coraza` is a **kubectl plugin**: install the binary as `kubectl-coraza` on your `PATH` so Kubernetes exposes it as **`kubectl coraza`** ([plugin mechanism](https://kubernetes.io/docs/tasks/extend-kubectl/kubectl-plugins/)).
+A [kubectl plugin](https://kubernetes.io/docs/tasks/extend-kubectl/kubectl-plugins/) that generates **RuleSet**, **ConfigMap**, and **Secret** manifests from OWASP CoreRuleSet files on disk.
 
-It provides client-side helpers for the Coraza Kubernetes operator. Today the main command generates **RuleSet**, **ConfigMap**, and optional **Secret** manifests from OWASP CoreRuleSet files on disk. The operator validates and compiles rules after you apply resources; this tool does not compile Coraza rules.
+> The operator validates and compiles rules after you apply them; this tool does not compile Coraza rules.
 
 ## Install
 
-Build or copy the binary so the name is exactly `kubectl-coraza` and it is on `PATH`. Then:
+Place the `kubectl-coraza` binary on your `PATH`, then verify:
 
 ```bash
 kubectl coraza --version
 ```
 
-## Generate CoreRuleSet manifests
+## Usage
 
 ```bash
 kubectl coraza generate coreruleset \
@@ -23,66 +23,37 @@ kubectl coraza generate coreruleset \
   [flags...]
 ```
 
-Reads `*.conf` and optional `*.data` from **one directory** (non-recursive). Writes a **multi-document YAML stream** to stdout; progress and warnings go to stderr.
+Reads `*.conf` and optional `*.data` from a single directory (non-recursive). Outputs multi-document YAML to stdout; progress and warnings go to stderr.
 
-### Common flags
+### Flags
 
-| Flag | Meaning |
-|------|---------|
+| Flag | Description |
+|------|-------------|
 | `--rules-dir` | Directory with `*.conf` / `*.data` (required) |
-| `--version` | CRS version, e.g. `4.24.1` or `v4.24.1` (required) |
-| `-n`, `--namespace` | If set, `metadata.namespace` on every object |
-| `--ruleset-name` | RuleSet `metadata.name` (default `default-ruleset`) |
+| `--version` | CRS version, e.g. `4.24.1` (required) |
+| `-n`, `--namespace` | Set `metadata.namespace` on every object |
+| `--ruleset-name` | RuleSet name (default `default-ruleset`) |
 | `--data-secret-name` | Secret name for `*.data` (default `coreruleset-data`) |
 | `--ignore-rules` | Comma-separated rule IDs to drop |
 | `--ignore-pmFromFile` | Strip `SecRule` lines using `@pmFromFile` |
-| `--include-test-rule` | Append X-CRS-Test block to bundled `base-rules` |
-| `--name-prefix` / `--name-suffix` | Prefix/suffix for ConfigMap names derived from `.conf` filenames |
-| `--dry-run=client` | Same YAML; stderr notes dry-run (no cluster access) |
-| `--skip-size-check` | Allow very large payloads (discouraged; etcd may still reject) |
+| `--include-test-rule` | Append X-CRS-Test block to `base-rules` |
+| `--name-prefix` / `--name-suffix` | Prefix/suffix for ConfigMap names |
+| `--dry-run=client` | Preview output without cluster access |
+| `--skip-size-check` | Allow oversized payloads (etcd may still reject) |
 
----
+## Library
 
-## Library: `corerulesetgen`
-
-Generation logic lives in [`../../internal/corerulesetgen`](../../internal/corerulesetgen). Use it if you need the pipeline without the kubectl wrapper.
-
-It emits a bundled `base-rules` ConfigMap, one ConfigMap per non-empty `.conf`, an optional `coraza/data` Secret for `.data` files, and a `RuleSet` (`waf.k8s.coraza.io/v1alpha1`). It does **not** validate Coraza syntax beyond formatting and size checks.
-
-### Pipeline
-
-1. **`ParseCRSVersion(version string)`** — normalize CRS version (e.g. `v4.24.1` → `CRSVersion`).
-2. **`Scan(rulesDir string)`** — glob `*.conf` / `*.data`, detect `@pmFromFile` in `.conf`.
-3. **`Build(opts, scan, ver)`** — build a **`ManifestBundle`** (YAML + per-file results for logging).
-4. **`WriteManifests(w, bundle)`** — multi-doc output with `---` separators.
-
-**`Generate(stdout, opts)`** applies defaults, parses version, validates the rules directory, runs the same steps, and writes human-oriented progress to **`opts.Stderr`** (what the plugin uses).
-
-### Example
+Generation logic lives in [`../../tools/corerulesetgen`](../../tools/corerulesetgen) and can be used directly without the kubectl wrapper.
 
 ```go
-ver, err := corerulesetgen.ParseCRSVersion("4.24.1")
-if err != nil { /* ... */ }
-
-scan, err := corerulesetgen.Scan("/path/to/rules")
-if err != nil { /* ... */ }
-
-bundle, err := corerulesetgen.Build(corerulesetgen.Options{
+ver, _ := corerulesetgen.ParseCRSVersion("4.24.1")
+scan, _ := corerulesetgen.Scan("/path/to/rules")
+bundle, _ := corerulesetgen.Build(corerulesetgen.Options{
     RulesDir:    "/path/to/rules",
     Version:     "4.24.1",
     RuleSetName: "my-ruleset",
 }, scan, ver)
-if err != nil { /* ... */ }
-
-if err := corerulesetgen.WriteManifests(os.Stdout, bundle); err != nil { /* ... */ }
+corerulesetgen.WriteManifests(os.Stdout, bundle)
 ```
 
-Defaults for **`Options`** match **`Generate`**; see [`../../internal/corerulesetgen/generate.go`](../../internal/corerulesetgen/generate.go).
-
-### Tests
-
-```bash
-go test ./internal/corerulesetgen/...
-```
-
-Golden fixtures: [`../../internal/corerulesetgen/testdata`](../../internal/corerulesetgen/testdata).
+Tests: `go test ./tools/corerulesetgen/...` — golden fixtures in [`../../tools/corerulesetgen/testdata`](../../tools/corerulesetgen/testdata).

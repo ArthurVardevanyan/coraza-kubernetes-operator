@@ -27,12 +27,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/networking-incubator/coraza-kubernetes-operator/internal/corerulesetgen"
+	"github.com/networking-incubator/coraza-kubernetes-operator/tools/corerulesetgen"
 )
+
+// -----------------------------------------------------------------------------
+// Vars
+// -----------------------------------------------------------------------------
 
 var (
 	version = "v0.0.0-dev"
 )
+
+// -----------------------------------------------------------------------------
+// Main
+// -----------------------------------------------------------------------------
 
 func main() {
 	root := &cobra.Command{
@@ -56,7 +64,7 @@ former Makefile Python generator. Output is a multi-document YAML stream on stdo
 
 RuleSet references ConfigMaps in the same namespace as the RuleSet; set --namespace when you
 need metadata.namespace on every object.`,
-		RunE: runCoreruleset,
+		RunE: genCRS,
 	}
 
 	flags := coreruleset.Flags()
@@ -84,7 +92,11 @@ need metadata.namespace on every object.`,
 	}
 }
 
-func runCoreruleset(cmd *cobra.Command, _ []string) error {
+// -----------------------------------------------------------------------------
+// Generator
+// -----------------------------------------------------------------------------
+
+func genCRS(cmd *cobra.Command, _ []string) error {
 	flags := cmd.Flags()
 	rulesDir, _ := flags.GetString("rules-dir")
 	ver, _ := flags.GetString("version")

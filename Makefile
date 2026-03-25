@@ -248,11 +248,11 @@ coraza.coreruleset: coraza.generaterules
 # -------------------------------------------------------------------------------
 CONFORMANCE_EXTRA_FLAGS ?= 
 
-# Verifies generator output for pinned CRS (CORERULESET_VERSION + --include-test-rule) against hack/coreruleset_parity.sha256.
+# Verifies generator output for pinned CRS (CORERULESET_VERSION + --include-test-rule) against tools/corerulesetgen/testdata/coreruleset_parity.sha256.
 .PHONY: coreruleset.verify-parity
 coreruleset.verify-parity:
 	@$(MAKE) CORERULESET_EXTRA_FLAGS="--include-test-rule" coraza.generaterules
-	sha256sum -c hack/coreruleset_parity.sha256
+	sha256sum -c tools/corerulesetgen/testdata/coreruleset_parity.sha256
 
 .PHONY: test.conformance
 test.conformance: coreruleset.verify-parity
