@@ -22,7 +22,7 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// Issue triage — label updates
+// Issue Triage — Labeling
 // -----------------------------------------------------------------------------
 
 // triageResult holds the changes to apply to an issue.
@@ -78,8 +78,24 @@ func computeLabelUpdates(labels []string, hasMilestone bool) triageResult {
 	return result
 }
 
+// effectiveLabels returns labels as they would be after applying a triageResult.
+func effectiveLabels(labels []string, result triageResult) []string {
+	out := slices.DeleteFunc(slices.Clone(labels), func(l string) bool {
+		return slices.Contains(result.LabelsToRemove, l)
+	})
+
+	return append(out, result.LabelsToAdd...)
+}
+
+// hasLabelPrefix returns true if any label starts with prefix.
+func hasLabelPrefix(labels []string, prefix string) bool {
+	return slices.ContainsFunc(labels, func(l string) bool {
+		return strings.HasPrefix(l, prefix)
+	})
+}
+
 // -----------------------------------------------------------------------------
-// Issue triage — declined handling
+// Issue Triage — Declined Issue Handling
 // -----------------------------------------------------------------------------
 
 // declinedResult holds the changes to apply when an issue is declined.
@@ -117,7 +133,7 @@ func computeDeclined(labels []string, hasMilestone bool, state string) *declined
 }
 
 // -----------------------------------------------------------------------------
-// Issue triage — area and size labels
+// Issue Triage — Area and Size Labeling
 // -----------------------------------------------------------------------------
 
 var areaRules = []struct {
@@ -159,17 +175,4 @@ func computeSizeLabels(labels []string) []string {
 	}
 
 	return nil
-}
-
-// -----------------------------------------------------------------------------
-// private helpers
-// -----------------------------------------------------------------------------
-
-// effectiveLabels returns labels as they would be after applying a triageResult.
-func effectiveLabels(labels []string, result triageResult) []string {
-	out := slices.DeleteFunc(slices.Clone(labels), func(l string) bool {
-		return slices.Contains(result.LabelsToRemove, l)
-	})
-
-	return append(out, result.LabelsToAdd...)
 }

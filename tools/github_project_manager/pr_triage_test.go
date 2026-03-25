@@ -23,6 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// -----------------------------------------------------------------------------
+// Tests - PR Triage
+// -----------------------------------------------------------------------------
+
 func TestComputePRAreaLabels(t *testing.T) {
 	tests := []struct {
 		name   string

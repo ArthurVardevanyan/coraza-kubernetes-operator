@@ -25,7 +25,7 @@ import (
 )
 
 // -----------------------------------------------------------------------------
-// Entry point
+// Entry Point
 // -----------------------------------------------------------------------------
 
 func main() {
@@ -35,90 +35,121 @@ func main() {
 	}
 }
 
-func run(args []string) error {
+// -----------------------------------------------------------------------------
+// Configuration
+// -----------------------------------------------------------------------------
+
+// config holds all parsed CLI flags, environment overrides, and the command.
+type config struct {
+	verbose bool
+	dryRun  bool
+	owner   string
+	repo    string
+	issue   int
+	project int
+	command string
+	token   string
+}
+
+// parseConfig parses CLI flags, applies environment variable fallbacks,
+// and validates that all required fields are present.
+func parseConfig(args []string) (config, error) {
 	fs := flag.NewFlagSet("github_project_manager", flag.ContinueOnError)
 
-	var (
-		verbose bool
-		dryRun  bool
-		owner   string
-		repo    string
-		issue   int
-		project int
-	)
-
-	fs.BoolVar(&verbose, "verbose", false, "enable verbose output")
-	fs.BoolVar(&verbose, "v", false, "enable verbose output (shorthand)")
-	fs.BoolVar(&dryRun, "dry-run", false, "display changes without making them")
-	fs.StringVar(&owner, "owner", "", "repository owner")
-	fs.StringVar(&repo, "repo", "", "repository name")
-	fs.IntVar(&issue, "issue", 0, "issue number")
-	fs.IntVar(&project, "project", 1, "project board number")
+	var cfg config
+	fs.BoolVar(&cfg.verbose, "verbose", false, "enable verbose output")
+	fs.BoolVar(&cfg.verbose, "v", false, "enable verbose output (shorthand)")
+	fs.BoolVar(&cfg.dryRun, "dry-run", false, "display changes without making them")
+	fs.StringVar(&cfg.owner, "owner", "", "repository owner")
+	fs.StringVar(&cfg.repo, "repo", "", "repository name")
+	fs.IntVar(&cfg.issue, "issue", 0, "issue number")
+	fs.IntVar(&cfg.project, "project", 1, "project board number")
 
 	if err := fs.Parse(args); err != nil {
-		return err
+		return config{}, err
 	}
 
 	remaining := fs.Args()
 	if len(remaining) == 0 {
-		return fmt.Errorf("missing command\n\n%s", usage())
+		return config{}, fmt.Errorf("missing command\n\n%s", usage())
 	}
+	cfg.command = remaining[0]
 
-	command := remaining[0]
-
-	if owner == "" {
-		owner = os.Getenv("GITHUB_OWNER")
+	if cfg.owner == "" {
+		cfg.owner = os.Getenv("GITHUB_OWNER")
 	}
-	if repo == "" {
-		repo = os.Getenv("GITHUB_REPO")
+	if cfg.repo == "" {
+		cfg.repo = os.Getenv("GITHUB_REPO")
 	}
-	if issue == 0 {
+	if cfg.issue == 0 {
 		if v := os.Getenv("GITHUB_ISSUE"); v != "" {
 			n, err := strconv.Atoi(v)
 			if err != nil {
-				return fmt.Errorf("invalid GITHUB_ISSUE %q: %w", v, err)
+				return config{}, fmt.Errorf("invalid GITHUB_ISSUE %q: %w", v, err)
 			}
-			issue = n
+			cfg.issue = n
 		}
 	}
 
-	if owner == "" || repo == "" || issue == 0 {
-		return fmt.Errorf("--owner, --repo, and --issue are required (or set GITHUB_OWNER, GITHUB_REPO, GITHUB_ISSUE)")
+	if cfg.owner == "" || cfg.repo == "" || cfg.issue == 0 {
+		return config{}, fmt.Errorf("--owner, --repo, and --issue are required (or set GITHUB_OWNER, GITHUB_REPO, GITHUB_ISSUE)")
 	}
 
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		return fmt.Errorf("GITHUB_TOKEN environment variable is required")
+	cfg.token = os.Getenv("GITHUB_TOKEN")
+	if cfg.token == "" {
+		return config{}, fmt.Errorf("GITHUB_TOKEN environment variable is required")
 	}
 
-	log := func(format string, a ...any) {
-		if verbose || dryRun {
+	return cfg, nil
+}
+
+// newLogger returns a logging function that prints when verbose or dry-run
+// mode is active.
+func newLogger(cfg config) func(string, ...any) {
+	return func(format string, a ...any) {
+		if cfg.verbose || cfg.dryRun {
 			fmt.Printf(format+"\n", a...)
 		}
 	}
+}
 
-	client := NewGitHubClient(token, owner, repo)
+// -----------------------------------------------------------------------------
+// Commands
+// -----------------------------------------------------------------------------
 
-	log("Fetching issue #%d from %s/%s", issue, owner, repo)
-	iss, err := client.GetIssue(issue)
+// run is the top-level entry point: parses config, creates the client,
+// and dispatches to the appropriate command.
+func run(args []string) error {
+	cfg, err := parseConfig(args)
+	if err != nil {
+		return err
+	}
+
+	client := NewGitHubClient(cfg.token, cfg.owner, cfg.repo)
+	return dispatch(cfg, client)
+}
+
+// dispatch fetches the issue and routes to the appropriate command handler.
+func dispatch(cfg config, client *GitHubClient) error {
+	log := newLogger(cfg)
+
+	log("Fetching issue #%d from %s/%s", cfg.issue, cfg.owner, cfg.repo)
+	iss, err := client.GetIssue(cfg.issue)
 	if err != nil {
 		return err
 	}
 
 	log("Issue #%d: state=%s milestone=%v labels=%v", iss.Number, iss.State, iss.HasMilestone(), iss.Labels)
 
-	switch command {
+	switch cfg.command {
 	case "update-labels":
-		return runUpdateLabels(client, issue, iss.Labels, iss.HasMilestone(), iss.Body, dryRun, log)
-
+		return runUpdateLabels(client, cfg.issue, iss.Labels, iss.HasMilestone(), iss.Body, cfg.dryRun, log)
 	case "close-declined":
-		return runCloseDeclined(client, issue, iss.Labels, iss.HasMilestone(), iss.State, dryRun, log)
-
+		return runCloseDeclined(client, cfg.issue, iss.Labels, iss.HasMilestone(), iss.State, cfg.dryRun, log)
 	case "triage-pr":
-		return runTriagePR(client, issue, iss, project, dryRun, log)
-
+		return runTriagePR(client, cfg.issue, iss, cfg.project, cfg.dryRun, log)
 	default:
-		return fmt.Errorf("unknown command %q\n\n%s", command, usage())
+		return fmt.Errorf("unknown command %q\n\n%s", cfg.command, usage())
 	}
 }
 
@@ -143,28 +174,12 @@ func runUpdateLabels(client *GitHubClient, number int, labels []string, hasMiles
 		return nil
 	}
 
-	for _, l := range result.LabelsToAdd {
-		log("Adding label: %s", l)
-	}
-	for _, l := range result.LabelsToRemove {
-		log("Removing label: %s", l)
+	if err := applyLabels(client, number, result.LabelsToAdd, result.LabelsToRemove, dryRun, log); err != nil {
+		return err
 	}
 
 	if dryRun {
 		fmt.Println("dry-run: no changes applied")
-		return nil
-	}
-
-	if len(result.LabelsToAdd) > 0 {
-		if err := client.AddLabels(number, result.LabelsToAdd); err != nil {
-			return err
-		}
-	}
-
-	for _, l := range result.LabelsToRemove {
-		if err := client.RemoveLabel(number, l); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -234,32 +249,13 @@ func runTriagePR(client *GitHubClient, number int, iss *Issue, projectNumber int
 	labelsToAdd = append(labelsToAdd, computePRAreaLabels(iss.Labels, files)...)
 	labelsToAdd = append(labelsToAdd, computePRSizeLabel(iss.Labels, prInfo.Additions, prInfo.Deletions)...)
 
-	if len(labelsToAdd) > 0 {
-		for _, l := range labelsToAdd {
-			log("Adding label: %s", l)
-		}
-		if !dryRun {
-			if err := client.AddLabels(number, labelsToAdd); err != nil {
-				return err
-			}
-		}
+	if err := applyLabels(client, number, labelsToAdd, nil, dryRun, log); err != nil {
+		return err
 	}
 
 	if !iss.HasMilestone() {
-		milestones, err := client.ListOpenMilestones()
-		if err != nil {
+		if err := assignMilestone(client, number, dryRun, log); err != nil {
 			return err
-		}
-		m, err := findLowestMilestone(milestones)
-		if err != nil {
-			log("Skipping milestone: %v", err)
-		} else {
-			log("Setting milestone: %s (#%d)", m.Title, m.Number)
-			if !dryRun {
-				if err := client.SetMilestone(number, m.Number); err != nil {
-					return err
-				}
-			}
 		}
 	} else {
 		log("PR already has a milestone, skipping")
@@ -274,6 +270,63 @@ func runTriagePR(client *GitHubClient, number int, iss *Issue, projectNumber int
 
 	if dryRun {
 		fmt.Println("dry-run: no changes applied")
+	}
+
+	return nil
+}
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+// applyLabels logs and applies label additions and removals. In dry-run mode,
+// labels are logged but no API calls are made.
+func applyLabels(client *GitHubClient, number int, toAdd, toRemove []string, dryRun bool, log func(string, ...any)) error {
+	for _, l := range toAdd {
+		log("Adding label: %s", l)
+	}
+	for _, l := range toRemove {
+		log("Removing label: %s", l)
+	}
+
+	if dryRun {
+		return nil
+	}
+
+	if len(toAdd) > 0 {
+		if err := client.AddLabels(number, toAdd); err != nil {
+			return err
+		}
+	}
+
+	for _, l := range toRemove {
+		if err := client.RemoveLabel(number, l); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// assignMilestone finds the lowest semver milestone and assigns it to the
+// given issue/PR. Logs a skip message if no valid milestone exists.
+func assignMilestone(client *GitHubClient, number int, dryRun bool, log func(string, ...any)) error {
+	milestones, err := client.ListOpenMilestones()
+	if err != nil {
+		return err
+	}
+
+	m, err := findLowestMilestone(milestones)
+	if err != nil {
+		log("Skipping milestone: %v", err)
+		return nil
+	}
+
+	log("Setting milestone: %s (#%d)", m.Title, m.Number)
+	if !dryRun {
+		if err := client.SetMilestone(number, m.Number); err != nil {
+			return err
+		}
 	}
 
 	return nil

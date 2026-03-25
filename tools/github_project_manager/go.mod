@@ -1,4 +1,4 @@
-module github.com/networking-incubator/coraza-kubernetes-operator/tools/cmd/github_project_manager
+module github.com/networking-incubator/coraza-kubernetes-operator/tools/github_project_manager
 
 go 1.26.0
 

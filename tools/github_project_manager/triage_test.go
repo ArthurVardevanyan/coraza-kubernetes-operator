@@ -23,6 +23,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// -----------------------------------------------------------------------------
+// Tests - Issue Triage
+// -----------------------------------------------------------------------------
+
 func TestComputeLabelUpdates(t *testing.T) {
 	tests := []struct {
 		name         string

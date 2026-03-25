@@ -26,6 +26,10 @@ import (
 	"time"
 )
 
+// -----------------------------------------------------------------------------
+// Consts - GitHub API
+// -----------------------------------------------------------------------------
+
 const (
 	defaultBaseURL = "https://api.github.com"
 	apiVersion     = "2022-11-28"
@@ -110,7 +114,7 @@ func NewGitHubClient(token, owner, repo string) *GitHubClient {
 }
 
 // -----------------------------------------------------------------------------
-// GitHubClient — issue endpoints
+// GitHubClient — Issues
 // -----------------------------------------------------------------------------
 
 // GetIssue fetches an issue by number.
@@ -190,7 +194,7 @@ func (c *GitHubClient) SetMilestone(number, milestoneNumber int) error {
 }
 
 // -----------------------------------------------------------------------------
-// GitHubClient — pull request endpoints
+// GitHubClient — Pull Requests
 // -----------------------------------------------------------------------------
 
 // GetPullRequestInfo fetches PR metadata needed for triage (node ID, line stats).
@@ -238,7 +242,7 @@ func (c *GitHubClient) AddToProjectBoard(prNodeID string, projectNumber int, sta
 }
 
 // -----------------------------------------------------------------------------
-// Private Helpers
+// Helpers
 // -----------------------------------------------------------------------------
 
 // pullRequestInfo holds the PR fields needed for triage.

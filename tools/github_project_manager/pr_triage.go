@@ -120,7 +120,7 @@ func findLowestMilestone(milestones []Milestone) (*Milestone, error) {
 }
 
 // -----------------------------------------------------------------------------
-// private helpers
+// Helpers
 // -----------------------------------------------------------------------------
 
 func parseSemver(s string) (*semver.Version, bool) {

@@ -18,16 +18,16 @@ jobs:
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                   ref: ${{ github.event.pull_request.base.sha }}
-                  sparse-checkout: tools/cmd/github_project_manager
+                  sparse-checkout: tools/github_project_manager
                   persist-credentials: false
 
             - name: Setup Go
               uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
               with:
-                  go-version-file: tools/cmd/github_project_manager/go.mod
+                  go-version-file: tools/github_project_manager/go.mod
 
             - name: Build project manager
-              working-directory: tools/cmd/github_project_manager
+              working-directory: tools/github_project_manager
               run: go build -o "${{ github.workspace }}/github_project_manager" .
 
             - name: Triage PR
