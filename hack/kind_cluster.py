@@ -4,87 +4,54 @@
 #
 # NOTE: generally you should run this from the Makefile ("make cluster.kind")
 
-import subprocess
 import argparse
-import os
-import sys
 import ipaddress
 import json
+import os
+import sys
 
-default_namespace: str = "integration-tests"
-gateway_api: str = (
-    "https://github.com/kubernetes-sigs/gateway-api/"
-    "releases/download/v1.4.1/standard-install.yaml"
+from lib import (
+    HELM_CHART_DIR, HELM_RELEASE_NAME,
+    detect_container_runtime, die, run,
 )
-sail_repo: str = "https://istio-ecosystem.github.io/sail-operator"
-helm_chart_dir: str = "charts/coraza-kubernetes-operator"
-helm_release_name: str = "coraza-kubernetes-operator"
-helm_release_namespace: str = "coraza-system"
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+DEFAULT_NAMESPACE = "integration-tests"
+GATEWAY_API_URL = (
+    "https://github.com/kubernetes-sigs/gateway-api"
+    "/releases/download/v1.4.1/standard-install.yaml"
+)
+SAIL_REPO = "https://istio-ecosystem.github.io/sail-operator"
 
 
-def get_istio_version() -> str:
-    """Get ISTIO_VERSION from environment, required for cluster setup operations."""
-    istio_version = os.environ.get("ISTIO_VERSION")
-    if not istio_version:
-        print("ERROR: ISTIO_VERSION environment variable is required", file=sys.stderr)
-        print("Please set ISTIO_VERSION to the desired Istio version (e.g., 1.28.2)", file=sys.stderr)
-        print("You can set a default in the Makefile or export it in your shell", file=sys.stderr)
-        sys.exit(1)
-    return istio_version
+# ---------------------------------------------------------------------------
+# Environment Helpers
+# ---------------------------------------------------------------------------
 
 
-def get_kind_network_range() -> str:
-    """Get the Network range used by kind network, to be used during LoadBalancer deployment"""
-    result = run("docker network inspect kind", check=False, capture_output=True)
-    if result.returncode != 0:
-        print("ERROR: Could not get the kind network range", file=sys.stderr)
-        sys.exit(1)
-    try:
-        metallb_pool_size = os.environ.get("METALLB_POOL_SIZE")
-        if not metallb_pool_size:
-            metallb_pool_size = "128"
-        metallb_pool_size_int = int(metallb_pool_size)
-        if metallb_pool_size_int > 255 or metallb_pool_size_int < 1:
-            print(f"WARNING: Unusual METALLB_POOL_SIZE: {metallb_pool_size_int}", file=sys.stderr)
-        # result.stdout is str because capture_output=True uses text=True
-        kind_network = json.loads(result.stdout)
-        ipam_config = kind_network[0].get("IPAM", {}).get("Config", [])
-        if not ipam_config:
-            raise ValueError(f"No IPAM configuration found for network: {kind_network}")
-        ipv4_config = next((c for c in ipam_config if ":" not in c.get("Subnet", "")), None)
-        if not ipv4_config:
-            raise ValueError("No IPv4 configuration found.")
-        cidr = ipv4_config.get("IPRange") or ipv4_config.get("Subnet")
-        net = ipaddress.ip_network(cidr)
-        broadcast = net.broadcast_address
-        last_pool_ip = broadcast - 1 # eg.: 172.18.255.254
-        first_pool_ip = broadcast - metallb_pool_size_int # eg.: 172.18.255.244
-        return f"{first_pool_ip}-{last_pool_ip}"
-    except Exception as e:
-        print(f"ERROR: Invalid IP address range: {e}", file=sys.stderr)
-        sys.exit(1)
-
-
-def run(cmd: str, check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        cmd,
-        shell=True,
-        check=check,
-        capture_output=capture_output,
-        text=capture_output  # Use text mode when capturing output for easier handling
-    )
+def require_env(key: str) -> str:
+    """Read a required environment variable or exit."""
+    value = os.environ.get(key)
+    if not value:
+        die(f"{key} environment variable is required")
+        return ""  # unreachable
+    return value
 
 
 def get_kind_context(name: str) -> str:
     return f"kind-{name}"
 
 
-def build_images() -> None:
-    print("Building container images")
-    run("make build.image")
+# ---------------------------------------------------------------------------
+# KIND Cluster Lifecycle
+# ---------------------------------------------------------------------------
 
 
 def create_cluster(name: str) -> None:
+    """Create a KIND cluster (no-op if it already exists)."""
     print(f"Creating kind cluster: {name}")
     result = run(f"kind get clusters | grep -q '^{name}$'", check=False)
     if result.returncode == 0:
@@ -93,52 +60,110 @@ def create_cluster(name: str) -> None:
         run(f"kind create cluster --name {name}")
 
 
+def delete_cluster(name: str) -> None:
+    print(f"Deleting kind cluster: {name}")
+    run(f"kind delete cluster --name {name}", check=False)
+
+
+# ---------------------------------------------------------------------------
+# Image Build & Load
+# ---------------------------------------------------------------------------
+
+
+def build_images() -> None:
+    print("Building container images")
+    run("make build.image")
+
+
 def load_images(name: str) -> None:
     print(f"Loading images into kind cluster: {name}")
     run("make cluster.load-images")
 
 
+# ---------------------------------------------------------------------------
+# Gateway API
+# ---------------------------------------------------------------------------
+
+
 def deploy_gateway_api_crds(context: str) -> None:
     print("Deploying Gateway API CRDs")
-    run(f"kubectl --context {context} apply -f {gateway_api}")
+    run(f"kubectl --context {context} apply -f {GATEWAY_API_URL}")
+
+
+# ---------------------------------------------------------------------------
+# MetalLB
+# ---------------------------------------------------------------------------
+
+
+def get_kind_network_range() -> str:
+    """Derive a MetalLB IP pool from the KIND docker network subnet."""
+    result = run("docker network inspect kind", check=False, capture_output=True)
+    if result.returncode != 0:
+        die("Could not inspect the kind docker network")
+
+    try:
+        pool_size = int(os.environ.get("METALLB_POOL_SIZE", "128"))
+        if pool_size > 255 or pool_size < 1:
+            print(f"WARNING: Unusual METALLB_POOL_SIZE: {pool_size}", file=sys.stderr)
+
+        kind_network = json.loads(result.stdout)
+        ipam_config = kind_network[0].get("IPAM", {}).get("Config", [])
+        if not ipam_config:
+            raise ValueError("No IPAM configuration found for kind network")
+
+        ipv4_config = next((c for c in ipam_config if ":" not in c.get("Subnet", "")), None)
+        if not ipv4_config:
+            raise ValueError("No IPv4 configuration found")
+
+        cidr = ipv4_config.get("IPRange") or ipv4_config.get("Subnet")
+        net = ipaddress.ip_network(cidr)
+        last = net.broadcast_address - 1
+        first = net.broadcast_address - pool_size
+        return f"{first}-{last}"
+    except (ValueError, KeyError, IndexError, StopIteration) as e:
+        die(f"Invalid IP address range: {e}")
+        return ""  # unreachable
+
 
 def deploy_metallb(context: str) -> bool:
+    """Deploy MetalLB. Returns True on success, False if METALLB_VERSION is unset."""
     metallb_version = os.environ.get("METALLB_VERSION")
     if not metallb_version:
-        print("WARNING: METALLB_VERSION is not set, skipping MetalLB deployment", file=sys.stderr)
+        print("WARNING: METALLB_VERSION is not set, skipping MetalLB", file=sys.stderr)
         return False
+
     print("Deploying MetalLB")
     try:
+        metallb_manifest_url = (
+            f"https://raw.githubusercontent.com/metallb/metallb"
+            f"/v{metallb_version}/config/manifests/metallb-native.yaml"
+        )
         run(
             f"kubectl --context {context} apply --server-side "
-            f"-f https://raw.githubusercontent.com/metallb/metallb/v{metallb_version}/config/manifests/metallb-native.yaml",
-            capture_output=True
+            f"-f {metallb_manifest_url}",
+            capture_output=True,
         )
         run(
             f"kubectl --context {context} wait --for=condition=Available "
             f"deployment/controller -n metallb-system --timeout=300s",
-            capture_output=True
+            capture_output=True,
         )
-        # Wait for webhook to be ready to avoid race condition with CRD creation
+        # Webhook may not exist in all MetalLB versions
         run(
             f"kubectl --context {context} wait --for=condition=Ready "
             f"pod -l component=webhook-server -n metallb-system --timeout=300s",
-            check=False,  # Webhook might not exist in all versions
-            capture_output=True
+            check=False, capture_output=True,
         )
         return True
+    except Exception as e:
+        die(f"Failed to deploy MetalLB: {e}")
+        return False  # unreachable
 
-    except subprocess.CalledProcessError as e:
-        print("ERROR: deploying MetalLB: kubectl command failed", file=sys.stderr)
-        if e.stdout:
-            print("kubectl stdout:", e.stdout, file=sys.stderr)
-        if e.stderr:
-            print("kubectl stderr:", e.stderr, file=sys.stderr)
-        sys.exit(1)
 
 def create_metallb_manifests(context: str, iprange: str) -> None:
+    """Create the MetalLB IPAddressPool and L2Advertisement."""
     print("Creating MetalLB pool and L2Advertisement")
-    metallb_manifests = f"""
+    manifests = f"""
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -157,25 +182,28 @@ spec:
   ipAddressPools:
   - kube-services
 """
-    run(
-        f"echo '{metallb_manifests}' | kubectl "
-        f"--context {context} apply --server-side -f -"
-    )
+    run(f"echo '{manifests}' | kubectl --context {context} apply --server-side -f -")
+
+
+# ---------------------------------------------------------------------------
+# Istio (Sail Operator)
+# ---------------------------------------------------------------------------
+
 
 def deploy_istio_sail(context: str) -> None:
-    istio_version = get_istio_version()
+    """Install the Sail operator via Helm and wait for readiness."""
+    istio_version = require_env("ISTIO_VERSION")
 
     print("Deploying Istio Sail Operator")
-    run(f"helm repo add sail-operator {sail_repo}")
+    run(f"helm repo add sail-operator {SAIL_REPO}")
     run("helm repo update")
     run(f"kubectl --context {context} create namespace sail-operator", check=False)
 
     result = run(
         f"helm list --namespace sail-operator --kube-context {context} "
         f"-o json | grep -q sail-operator",
-        check=False
+        check=False,
     )
-
     if result.returncode != 0:
         run(
             f"helm install sail-operator sail-operator/sail-operator "
@@ -191,50 +219,14 @@ def deploy_istio_sail(context: str) -> None:
     )
 
 
-def create_gateway_class(context: str) -> None:
-    print("Creating GatewayClass for Istio")
-    gateway_class = """
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: istio
-spec:
-  controllerName: istio.io/gateway-controller
-"""
-    run(
-        f"echo '{gateway_class}' | kubectl "
-        f"--context {context} apply -f -"
-    )
-
-
-def create_gateway(context: str, loadbalancer: bool) -> None:
-    run(
-        f"kubectl --context {context} "
-        f" create namespace {default_namespace}", check=False
-    )
-
-    print("Creating Gateway for Istio")
-    if loadbalancer:
-        run(f"kubectl --context {context} -n {default_namespace} apply -f config/samples/gateway.yaml")
-    else:
-        run(f"kubectl annotate -f config/samples/gateway.yaml networking.istio.io/service-type=ClusterIP --local -o yaml |kubectl --context {context} -n {default_namespace} apply -f -")
-
-    run(
-        f"kubectl --context {context} -n {default_namespace} wait "
-        "--for=condition=Programmed gateway/coraza-gateway --timeout=300s"
-    )
-
-
 def create_istio_control_plane(context: str) -> None:
-    istio_version = get_istio_version()
+    """Create the Istio CR for the control plane and wait for readiness."""
+    istio_version = require_env("ISTIO_VERSION")
 
-    run(
-        f"kubectl --context {context} "
-        " create namespace coraza-system", check=False
-    )
+    run(f"kubectl --context {context} create namespace coraza-system", check=False)
 
     print("Creating Istio control-plane")
-    istio = f"""
+    istio_cr = f"""
 apiVersion: sailoperator.io/v1
 kind: Istio
 metadata:
@@ -258,17 +250,61 @@ spec:
         PILOT_ENABLE_GATEWAY_API_CA_CERT_ONLY: "true"
         PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS: "false"
 """
-    run(
-        f"echo '{istio}' | kubectl "
-        f"--context {context} apply -f -"
-    )
+    run(f"echo '{istio_cr}' | kubectl --context {context} apply -f -")
     run(
         f"kubectl --context {context} --namespace coraza-system wait "
         "--for=condition=Ready istio/coraza --timeout=300s"
     )
 
 
+# ---------------------------------------------------------------------------
+# Gateway
+# ---------------------------------------------------------------------------
+
+
+def create_gateway_class(context: str) -> None:
+    print("Creating GatewayClass for Istio")
+    gateway_class = """
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: istio
+spec:
+  controllerName: istio.io/gateway-controller
+"""
+    run(f"echo '{gateway_class}' | kubectl --context {context} apply -f -")
+
+
+def create_gateway(context: str, loadbalancer: bool) -> None:
+    """Create the sample Gateway, optionally with ClusterIP annotation."""
+    run(f"kubectl --context {context} create namespace {DEFAULT_NAMESPACE}", check=False)
+
+    print("Creating Gateway for Istio")
+    gw_manifest = "config/samples/gateway.yaml"
+    ns_ctx = f"--context {context} -n {DEFAULT_NAMESPACE}"
+    if loadbalancer:
+        run(f"kubectl {ns_ctx} apply -f {gw_manifest}")
+    else:
+        run(
+            f"kubectl annotate -f {gw_manifest} "
+            f"networking.istio.io/service-type=ClusterIP "
+            f"--local -o yaml "
+            f"| kubectl {ns_ctx} apply -f -"
+        )
+
+    run(
+        f"kubectl --context {context} -n {DEFAULT_NAMESPACE} wait "
+        "--for=condition=Programmed gateway/coraza-gateway --timeout=300s"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Operator Deployment
+# ---------------------------------------------------------------------------
+
+
 def deploy_coraza_operator(context: str) -> None:
+    """Deploy the Coraza operator via Helm and wait for readiness."""
     print("Deploying Coraza Operator")
 
     image_repo = os.environ.get(
@@ -278,8 +314,8 @@ def deploy_coraza_operator(context: str) -> None:
     image_tag = os.environ.get("CONTROLLER_MANAGER_CONTAINER_IMAGE_TAG", "v0.0.0-dev")
 
     run(
-        f"helm upgrade --install {helm_release_name} {helm_chart_dir} "
-        f"--namespace {helm_release_namespace} "
+        f"helm upgrade --install {HELM_RELEASE_NAME} {HELM_CHART_DIR} "
+        f"--namespace coraza-system "
         f"--create-namespace "
         f"--set image.repository={image_repo} "
         f"--set image.tag={image_tag} "
@@ -288,43 +324,20 @@ def deploy_coraza_operator(context: str) -> None:
     )
 
     run(
-        f"kubectl --context {context} --namespace {helm_release_namespace} wait "
+        f"kubectl --context {context} --namespace coraza-system wait "
         "--for=condition=Available "
         "deployment/coraza-kubernetes-operator --timeout=300s"
     )
 
-def detect_docker() -> bool:
-    """Detect if Docker is available (as opposed to Podman)."""
-    print("detecting if Docker is available, otherwise assuming this is a Podman cluster")
-    result = run("docker version -f json", check=False, capture_output=True)
-    if result.returncode != 0:
-        # Docker not available, check for podman
-        print("Docker not found, checking for podman")
-        podman_result = run("podman version", check=False, capture_output=True)
-        if podman_result.returncode != 0:
-            print("ERROR: Neither docker nor podman is available", file=sys.stderr)
-            print("Please install either docker or podman to continue", file=sys.stderr)
-            sys.exit(1)
-        # Podman is available
-        return False
-    try:
-        # result.stdout is str because capture_output=True uses text=True
-        client_decoded = json.loads(result.stdout)
-        platform = client_decoded.get("Client", {}).get("Platform", {}).get("Name", '')
-        if "Docker Engine" in platform:
-            return True
-        return False
-    except (json.JSONDecodeError, KeyError, AttributeError):
-        return False
 
-
-def delete_cluster(name: str) -> None:
-    print(f"Deleting kind cluster: {name}")
-    run(f"kind delete cluster --name {name}", check=False)
+# ---------------------------------------------------------------------------
+# Full Cluster Setup
+# ---------------------------------------------------------------------------
 
 
 def setup_cluster(name: str) -> None:
-    docker_available = detect_docker()
+    """End-to-end cluster setup: create, load images, install components."""
+    docker_available = detect_container_runtime() == "docker"
     build_images()
     create_cluster(name)
     load_images(name)
@@ -332,12 +345,13 @@ def setup_cluster(name: str) -> None:
     context = get_kind_context(name)
 
     deploy_gateway_api_crds(context)
+
     metallb_enabled = False
     if docker_available:
         if deploy_metallb(context):
-            metallb_ip_range = get_kind_network_range()
-            create_metallb_manifests(context, metallb_ip_range)
+            create_metallb_manifests(context, get_kind_network_range())
             metallb_enabled = True
+
     deploy_istio_sail(context)
     create_istio_control_plane(context)
     create_gateway_class(context)
@@ -347,8 +361,13 @@ def setup_cluster(name: str) -> None:
     print("Cluster setup complete")
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Manage KIND integration clusters")
     parser.add_argument("action", choices=["create", "delete", "setup"])
     parser.add_argument("--name", default="coraza-kubernetes-operator-integration")
     args = parser.parse_args()

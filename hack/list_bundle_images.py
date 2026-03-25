@@ -10,22 +10,24 @@ Usage: list_bundle_images.py <catalog-file> <bundle-image-base> [package-name]
 
 import sys
 
-import yaml
+from lib import die, load_yaml_docs
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 
 def main():
     if len(sys.argv) < 3:
-        print(f"usage: {sys.argv[0]} <catalog-file> <bundle-image-base> [package-name]",
-              file=sys.stderr)
-        sys.exit(1)
+        die(f"usage: {sys.argv[0]} <catalog-file> <bundle-image-base> [package-name]")
 
     catalog_file = sys.argv[1]
     bundle_img_base = sys.argv[2]
     package_name = sys.argv[3] if len(sys.argv) > 3 else "coraza-kubernetes-operator"
 
-    with open(catalog_file) as f:
-        docs = [d for d in yaml.safe_load_all(f) if d]
+    docs = load_yaml_docs(catalog_file)
 
+    # Collect bundle image refs from all channel entries
     images = []
     for doc in docs:
         if (doc.get("schema") == "olm.channel"

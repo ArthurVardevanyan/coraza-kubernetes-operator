@@ -10,22 +10,15 @@ Usage: update_catalog.py <catalog-file> <version> [package-name] [channel]
 
 import sys
 
-import yaml
+from lib import die, load_yaml_docs, write_yaml_docs
 
-
-def load_catalog(path: str) -> list:
-    with open(path) as f:
-        docs = list(yaml.safe_load_all(f))
-    return [d for d in docs if d is not None]
-
-
-def write_catalog(path: str, docs: list):
-    with open(path, "w") as f:
-        yaml.dump_all(docs, f, default_flow_style=False, sort_keys=False,
-                      explicit_start=True)
+# ---------------------------------------------------------------------------
+# Catalog Helpers
+# ---------------------------------------------------------------------------
 
 
 def find_channel(docs: list, channel: str, package_name: str) -> dict:
+    """Return the olm.channel document matching the given channel and package."""
     for doc in docs:
         if (doc.get("schema") == "olm.channel"
                 and doc.get("name") == channel
@@ -34,11 +27,14 @@ def find_channel(docs: list, channel: str, package_name: str) -> dict:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
 def main():
     if len(sys.argv) < 3:
-        print(f"usage: {sys.argv[0]} <catalog-file> <version> [package-name]",
-              file=sys.stderr)
-        sys.exit(1)
+        die(f"usage: {sys.argv[0]} <catalog-file> <version> [package-name] [channel]")
 
     catalog_file = sys.argv[1]
     version = sys.argv[2].lstrip("v")
@@ -47,26 +43,25 @@ def main():
 
     entry_name = f"{package_name}.v{version}"
 
-    docs = load_catalog(catalog_file)
+    docs = load_yaml_docs(catalog_file)
     channel_doc = find_channel(docs, channel, package_name)
     if not channel_doc:
-        print(f"ERROR: channel '{channel}' not found", file=sys.stderr)
-        sys.exit(1)
+        die(f"channel '{channel}' not found")
 
     entries = channel_doc.setdefault("entries", [])
     for e in entries:
         if e["name"] == entry_name:
-            print(f"Entry {entry_name} already exists, nothing to do",
-                  file=sys.stderr)
+            print(f"Entry {entry_name} already exists, nothing to do", file=sys.stderr)
             return
 
+    # Set replaces to the current latest entry for upgrade path
     previous = entries[-1]["name"] if entries else None
     new_entry = {"name": entry_name}
     if previous:
         new_entry["replaces"] = previous
     entries.append(new_entry)
 
-    write_catalog(catalog_file, docs)
+    write_yaml_docs(catalog_file, docs)
     replaces_msg = f" (replaces {previous})" if previous else ""
     print(f"Added {entry_name} to catalog{replaces_msg}", file=sys.stderr)
 
