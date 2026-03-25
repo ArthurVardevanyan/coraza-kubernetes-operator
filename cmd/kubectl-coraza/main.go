@@ -27,7 +27,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/networking-incubator/coraza-kubernetes-operator/pkg/corerulesetgen"
+	"github.com/networking-incubator/coraza-kubernetes-operator/internal/corerulesetgen"
 )
 
 var (

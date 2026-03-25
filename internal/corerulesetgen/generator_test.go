@@ -23,7 +23,7 @@ func TestGenerate_minimalFixture(t *testing.T) {
 
 	want, err := os.ReadFile(filepath.Join(dir, "golden.yaml"))
 	require.NoError(t, err)
-	require.Equal(t, string(want), out.String(), "update golden with: go test ./pkg/corerulesetgen -run TestGenerate_minimalFixture")
+	require.Equal(t, string(want), out.String(), "update golden with: go test ./internal/corerulesetgen -run TestGenerate_minimalFixture")
 }
 
 func TestGenerate_withDataSecret(t *testing.T) {

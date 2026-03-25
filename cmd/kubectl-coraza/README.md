@@ -45,7 +45,7 @@ Reads `*.conf` and optional `*.data` from **one directory** (non-recursive). Wri
 
 ## Library: `corerulesetgen`
 
-Generation logic lives in [`../../pkg/corerulesetgen`](../../pkg/corerulesetgen). Use it if you need the pipeline without the kubectl wrapper.
+Generation logic lives in [`../../internal/corerulesetgen`](../../internal/corerulesetgen). Use it if you need the pipeline without the kubectl wrapper.
 
 It emits a bundled `base-rules` ConfigMap, one ConfigMap per non-empty `.conf`, an optional `coraza/data` Secret for `.data` files, and a `RuleSet` (`waf.k8s.coraza.io/v1alpha1`). It does **not** validate Coraza syntax beyond formatting and size checks.
 
@@ -77,12 +77,12 @@ if err != nil { /* ... */ }
 if err := corerulesetgen.WriteManifests(os.Stdout, bundle); err != nil { /* ... */ }
 ```
 
-Defaults for **`Options`** match **`Generate`**; see [`../../pkg/corerulesetgen/generate.go`](../../pkg/corerulesetgen/generate.go).
+Defaults for **`Options`** match **`Generate`**; see [`../../internal/corerulesetgen/generate.go`](../../internal/corerulesetgen/generate.go).
 
 ### Tests
 
 ```bash
-go test ./pkg/corerulesetgen/...
+go test ./internal/corerulesetgen/...
 ```
 
-Golden fixtures: [`../../pkg/corerulesetgen/testdata`](../../pkg/corerulesetgen/testdata).
+Golden fixtures: [`../../internal/corerulesetgen/testdata`](../../internal/corerulesetgen/testdata).
