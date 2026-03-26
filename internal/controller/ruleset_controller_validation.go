@@ -43,7 +43,7 @@ func (r *RuleSetReconciler) validateAggregatedRules(
 	if _, err := coraza.NewWAF(conf); err != nil {
 		msg := fmt.Sprintf("Ruleset is invalid\n%v", sanitizeErrorMessage(err))
 		for _, cmapErr := range aggregatedErrors {
-			r.Recorder.Eventf(ruleset, nil, "Warning", "InvalidConfigMap", "Reconcile", cmapErr.Error())
+			r.Recorder.Eventf(ruleset, nil, "Warning", "InvalidConfigMap", "Reconcile", truncateEventNote(cmapErr.Error()))
 			msg = fmt.Sprintf("%s\n%v", msg, cmapErr)
 		}
 		if patchErr := patchDegraded(ctx, r.Status(), r.Recorder, log, req, "RuleSet", ruleset, &ruleset.Status.Conditions, ruleset.Generation, "InvalidRuleSet", msg); patchErr != nil {
@@ -79,7 +79,7 @@ func (r *RuleSetReconciler) rejectUnsupportedRules(
 
 	if ruleset.Annotations[wafv1alpha1.AnnotationSkipUnsupportedRulesCheck] == "true" {
 		logDebug(log, req, "RuleSet", "Unsupported rules check overridden by annotation; not degrading")
-		r.Recorder.Eventf(ruleset, nil, "Warning", "UnsupportedRules", "Reconcile", msg)
+		r.Recorder.Eventf(ruleset, nil, "Warning", "UnsupportedRules", "Reconcile", truncateEventNote(msg))
 		return false, msg, nil
 	}
 

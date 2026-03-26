@@ -104,6 +104,19 @@ func setStatusProgressing(log logr.Logger, req ctrl.Request, kind string, condit
 	setConditionTrue(conditions, generation, "Progressing", reason, message)
 }
 
+// maxEventNoteBytes is the maximum size of the note field in events.k8s.io/v1.
+// Events exceeding this limit are silently rejected by the API server.
+const maxEventNoteBytes = 1024
+
+// truncateEventNote truncates a message to fit within the events v1 API note
+// field limit. Status condition messages are unaffected by this limit.
+func truncateEventNote(msg string) string {
+	if len(msg) <= maxEventNoteBytes {
+		return msg
+	}
+	return msg[:maxEventNoteBytes-3] + "..."
+}
+
 // patchDegraded marks a resource as Degraded, emits a Warning event, and
 // patches the status in a single call. It consolidates the repeated pattern of
 // Eventf → DeepCopy → setStatusConditionDegraded → Status().Patch → error log.
@@ -119,7 +132,7 @@ func patchDegraded(
 	generation int64,
 	reason, message string,
 ) error {
-	recorder.Eventf(obj, nil, "Warning", reason, "Reconcile", message)
+	recorder.Eventf(obj, nil, "Warning", reason, "Reconcile", truncateEventNote(message))
 	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
 	setStatusConditionDegraded(log, req, kind, conditions, generation, reason, message)
 	if err := statusWriter.Patch(ctx, obj, patch); err != nil {
@@ -151,7 +164,7 @@ func patchReady(
 	generation int64,
 	reason, message string,
 ) error {
-	recorder.Eventf(obj, nil, "Normal", reason, "Reconcile", message)
+	recorder.Eventf(obj, nil, "Normal", reason, "Reconcile", truncateEventNote(message))
 	patch := client.MergeFrom(obj.DeepCopyObject().(client.Object))
 	setStatusReady(log, req, kind, conditions, generation, reason, message)
 	if err := statusWriter.Patch(ctx, obj, patch); err != nil {
