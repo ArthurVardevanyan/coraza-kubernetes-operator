@@ -154,9 +154,9 @@ func (r *EngineReconciler) buildWasmPlugin(engine *wafv1alpha1.Engine) *unstruct
 		},
 	}
 
-	if secret := engine.Spec.Driver.Istio.Wasm.ImagePullSecret; secret != "" {
+	if engine.Spec.Driver.Istio.Wasm.ImagePullSecret != nil {
 		spec := wasmPlugin.Object["spec"].(map[string]any)
-		spec["imagePullSecret"] = secret
+		spec["imagePullSecret"] = *engine.Spec.Driver.Istio.Wasm.ImagePullSecret
 	}
 
 	wasmPlugin.SetGroupVersionKind(schema.GroupVersionKind{

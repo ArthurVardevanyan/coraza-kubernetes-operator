@@ -25,6 +25,14 @@ import (
 	wafv1alpha1 "github.com/networking-incubator/coraza-kubernetes-operator/api/v1alpha1"
 )
 
+// ptrStringOrNil returns a pointer to s if non-empty, or nil.
+func ptrStringOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // -----------------------------------------------------------------------------
 // Test Resource Builders - RuleSet
 // -----------------------------------------------------------------------------
@@ -150,7 +158,7 @@ func NewTestEngine(opts EngineOptions) *wafv1alpha1.Engine {
 				Istio: &wafv1alpha1.IstioDriverConfig{
 					Wasm: &wafv1alpha1.IstioWasmConfig{
 						Image:           opts.WasmImage,
-						ImagePullSecret: opts.ImagePullSecret,
+						ImagePullSecret: ptrStringOrNil(opts.ImagePullSecret),
 						WorkloadSelector: &metav1.LabelSelector{
 							MatchLabels: opts.WorkloadLabels,
 						},

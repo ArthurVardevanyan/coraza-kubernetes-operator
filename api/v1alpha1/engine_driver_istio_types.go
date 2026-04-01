@@ -77,7 +77,7 @@ type IstioWasmConfig struct {
 	//
 	// +optional
 	// +kubebuilder:validation:MaxLength=253
-	ImagePullSecret string `json:"imagePullSecret,omitempty"`
+	ImagePullSecret *string `json:"imagePullSecret,omitempty"`
 
 	// ruleSetCacheServer contains configuration for the ruleset cache server.
 	//
