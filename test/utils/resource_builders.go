@@ -103,6 +103,7 @@ type EngineOptions struct {
 	Namespace            string
 	RuleSetName          string
 	WasmImage            string
+	ImagePullSecret      string
 	PollIntervalSeconds  int32
 	WorkloadLabels       map[string]string
 	IstioIntegrationMode wafv1alpha1.IstioIntegrationMode
@@ -148,7 +149,8 @@ func NewTestEngine(opts EngineOptions) *wafv1alpha1.Engine {
 			Driver: &wafv1alpha1.DriverConfig{
 				Istio: &wafv1alpha1.IstioDriverConfig{
 					Wasm: &wafv1alpha1.IstioWasmConfig{
-						Image: opts.WasmImage,
+						Image:           opts.WasmImage,
+						ImagePullSecret: opts.ImagePullSecret,
 						WorkloadSelector: &metav1.LabelSelector{
 							MatchLabels: opts.WorkloadLabels,
 						},

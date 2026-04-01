@@ -340,6 +340,50 @@ func getNestedString(obj map[string]any, key string) (string, bool, error) {
 	return strVal, true, nil
 }
 
+func TestEngineReconciler_ImagePullSecretInWasmPlugin(t *testing.T) {
+	reconciler := &EngineReconciler{
+		Client:                    k8sClient,
+		Scheme:                    scheme,
+		Recorder:                  utils.NewTestRecorder(),
+		ruleSetCacheServerCluster: "test-cluster",
+	}
+
+	t.Run("imagePullSecret is set when specified", func(t *testing.T) {
+		engine := utils.NewTestEngine(utils.EngineOptions{
+			Name:            "engine-with-pull-secret",
+			Namespace:       testNamespace,
+			ImagePullSecret: "my-registry-secret",
+		})
+
+		wasmPlugin := reconciler.buildWasmPlugin(engine)
+
+		spec, found, err := getNestedMap(wasmPlugin.Object, "spec")
+		require.NoError(t, err)
+		require.True(t, found)
+
+		secret, found, err := getNestedString(spec, "imagePullSecret")
+		require.NoError(t, err)
+		require.True(t, found, "imagePullSecret should be present in WasmPlugin spec")
+		assert.Equal(t, "my-registry-secret", secret)
+	})
+
+	t.Run("imagePullSecret is omitted when empty", func(t *testing.T) {
+		engine := utils.NewTestEngine(utils.EngineOptions{
+			Name:      "engine-without-pull-secret",
+			Namespace: testNamespace,
+		})
+
+		wasmPlugin := reconciler.buildWasmPlugin(engine)
+
+		spec, found, err := getNestedMap(wasmPlugin.Object, "spec")
+		require.NoError(t, err)
+		require.True(t, found)
+
+		_, found = spec["imagePullSecret"]
+		assert.False(t, found, "imagePullSecret should not be present in WasmPlugin spec when empty")
+	})
+}
+
 func TestEngineReconciler_ValidationRejection(t *testing.T) {
 	ctx := context.Background()
 
