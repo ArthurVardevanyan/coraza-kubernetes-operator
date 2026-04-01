@@ -76,6 +76,7 @@ type IstioWasmConfig struct {
 	// WASM OCI image. This is passed directly to the Istio WasmPlugin resource.
 	//
 	// +optional
+	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	ImagePullSecret *string `json:"imagePullSecret,omitempty"`
 
